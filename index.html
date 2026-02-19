@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Golden Catch: CrazyGames Edition</title>
+    <!-- CrazyGames SDK v3 -->
+    <script src="https://sdk.crazygames.com"></script>
+    <style>
+        :root { --neon: #00f2fe; --gold: #f1c40f; --danger: #ff4757; --wa: #25D366; --reward: #ff9f43; }
+        body { margin: 0; overflow: hidden; background: #05060a; color: white; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; }
+        
+        #top-ui { position: absolute; top: 10px; display: flex; align-items: center; gap: 12px; z-index: 500; }
+        #ad-icon-unit {
+            width: 100px; height: 35px; background: rgba(241, 196, 15, 0.1); border: 2px solid var(--gold); border-radius: 8px;
+            display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold;
+            color: var(--gold); cursor: pointer; animation: blink-ad 0.8s infinite alternate;
+        }
+        @keyframes blink-ad { from { opacity: 1; transform: scale(1); } to { opacity: 0.6; transform: scale(1.03); } }
+        #heart-border { background: rgba(0,0,0,0.6); border: 2px solid var(--danger); padding: 5px 15px; border-radius: 50px; font-size: 18px; box-shadow: 0 0 10px var(--danger); }
+
+        #hud { position: absolute; top: 65px; width: 95%; max-width: 420px; display: flex; justify-content: space-around; padding: 10px; background: rgba(255,255,255,0.1); backdrop-filter: blur(8px); border-radius: 15px; z-index: 100; border: 1px solid rgba(255,255,255,0.2); }
+        
+        canvas { display: block; margin-top: 135px; border-radius: 25px; box-shadow: 0 0 40px rgba(0,0,0,0.8); touch-action: none; transition: background 2s ease; background: #0f2027; }
+
+        #game-over, #start-screen { position: fixed; inset: 0; background: rgba(0,0,0,0.98); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; text-align: center; }
+        #game-over { display: none; }
+
+        /* Game Over Ad Styling */
+        .game-over-ad {
+            width: 300px; height: 100px; background: #111; border: 1px dashed #444; margin: 15px;
+            display: flex; align-items: center; justify-content: center; border-radius: 10px;
+            color: #666; font-size: 12px; font-weight: bold; overflow: hidden;
+        }
+        
+        .btn { padding: 12px 30px; border-radius: 50px; border: none; font-weight: bold; cursor: pointer; margin: 5px; font-size: 15px; display: flex; align-items: center; gap: 8px; text-decoration: none; }
+        .btn-replay { background: var(--neon); color: #000; }
+        .btn-wa { background: var(--wa); color: #fff; }
+        .btn-reward { background: var(--reward); color: #000; box-shadow: 0 0 15px var(--reward); }
+    </style>
+</head>
+<body>
+
+<div id="start-screen">
+    <h1 style="color:var(--gold); font-size: 32px;">GOLDEN CATCH</h1>
+    <button class="btn btn-replay" onclick="startGame()">PLAY NOW ▶️</button>
+</div>
+
+<div id="top-ui">
+    <div id="ad-icon-unit" onclick="window.open('https://www.google.com', '_blank')">FREE COINS 🎁</div>
+    <div id="heart-border">❤️❤️❤️</div>
+</div>
+
+<div id="hud">
+    <div>Score: <span id="score" style="color:var(--neon); font-weight:bold;">0</span></div>
+    <div>Best: <span id="high-score-hud" style="color:var(--gold); font-weight:bold;">0</span></div>
+    <div>Level: <span id="level" style="color:white; font-weight:bold;">1</span></div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="game-over">
+    <h1 style="color:var(--danger); font-size: 40px; margin: 0;">LOST!</h1>
+    
+    <!-- Game Over Ad Unit -->
+    <div class="game-over-ad" onclick="window.open('https://www.google.com', '_blank')">
+        <div style="text-align: center;">
+            <p style="margin:0; color:var(--gold);">SPONSORED AD</p>
+            <p style="margin:5px 0 0; font-size: 10px;">Click to learn more</p>
+        </div>
+    </div>
+
+    <p>Final Score: <span id="final-score" style="color:var(--gold); font-size: 28px;">0</span></p>
+    
+    <button id="reward-btn" class="btn btn-reward" onclick="watchRewardAd()">
+        📺 WATCH AD FOR +1 LIFE
+    </button>
+
+    <button class="btn btn-replay" onclick="location.reload()">REPLAY 🔄</button>
+    <a id="wa-share" class="btn btn-wa" target="_blank">SHARE SCORE</a>
+</div>
+
+<script>
+    const crazyGame = window.CrazyGames ? window.CrazyGames.SDK : null;
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    canvas.width = Math.min(window.innerWidth - 20, 400);
+    canvas.height = 450;
+
+    let score = 0, lives = 3, level = 1, active = false, canReward = true;
+    let basket = { x: canvas.width / 2 - 25, y: canvas.height - 60, w: 50 };
+    let items = [], lastSpawn = 0;
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    let bgMusicNode = null;
+
+    function playSound(freq, type, duration, vol = 0.1) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+    }
+
+    function playBGM() {
+        const notes = [261.63, 293.66, 329.63, 349.23];
+        let i = 0;
+        bgMusicNode = setInterval(() => { if(active) playSound(notes[i++ % notes.length], 'triangle', 0.5, 0.03); }, 600);
+    }
+
+    const soundEffect = {
+        catch: () => playSound(500, 'sine', 0.1),
+        gold: () => { playSound(800, 'sine', 0.1); setTimeout(()=>playSound(1200, 'sine', 0.1), 50); },
+        miss: () => playSound(150, 'sawtooth', 0.2),
+        over: () => playSound(100, 'square', 0.5, 0.2)
+    };
+
+    async function startGame() {
+        if (audioCtx.state === 'suspended') await audioCtx.resume();
+        active = true;
+        document.getElementById("start-screen").style.display = "none";
+        playBGM();
+        requestAnimationFrame(update);
+    }
+
+    let highScore = localStorage.getItem("gc_best_score") || 0;
+    document.getElementById("high-score-hud").innerText = highScore;
+
+    let clouds = [{ x: 50, y: 50, s: 0.3 }, { x: 250, y: 90, s: 0.5 }];
+    let stars = Array.from({ length: 30 }, () => ({ x: Math.random()*canvas.width, y: Math.random()*250, size: Math.random()*2, opacity: Math.random() }));
+    const bgLevels = ["#0f2027", "#1e3c72", "#2c3e50", "#4b1248", "#000428"];
+
+    function update(timestamp) {
+        if (!active) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        level = Math.floor(score / 50) + 1;
+        document.getElementById("level").innerText = level;
+        canvas.style.background = bgLevels[Math.min(level - 1, 4)];
+
+        if (level >= 3 && level < 5) {
+            ctx.font = "40px serif"; ctx.globalAlpha = 0.4;
+            clouds.forEach(c => { ctx.fillText("☁️", c.x, c.y); c.x += c.s; if (c.x > canvas.width + 50) c.x = -60; });
+            ctx.globalAlpha = 1.0;
+        } else if (level >= 5) {
+            stars.forEach(s => {
+                s.opacity += (Math.random() - 0.5) * 0.1;
+                ctx.globalAlpha = Math.abs(s.opacity);
+                ctx.fillStyle = "white"; ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, Math.PI*2); ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
+        }
+
+        let spawnRate = Math.max(400, 1000 - (level * 80));
+        if (timestamp - lastSpawn > spawnRate) {
+            items.push({ x: Math.random() * (canvas.width - 30) + 15, y: -30, speed: (3 + Math.random() * 2) * (1 + (level - 1) * 0.22), type: Math.random() < 0.15 ? 'gold' : 'normal' });
+            lastSpawn = timestamp;
+        }
+
+        ctx.font = "50px serif"; ctx.textAlign = "center";
+        ctx.fillText("🧺", basket.x + 25, basket.y + 40);
+
+        items.forEach((it, i) => {
+            it.y += it.speed;
+            ctx.font = "30px serif";
+            ctx.fillText(it.type === 'gold' ? "🟡" : "🟢", it.x, it.y);
+            if (it.y > basket.y && it.y < basket.y + 40 && it.x > basket.x - 10 && it.x < basket.x + 60) {
+                if(it.type === 'gold') { score += 5; soundEffect.gold(); } else { score += 1; soundEffect.catch(); }
+                document.getElementById("score").innerText = score;
+                items.splice(i, 1);
+            } else if (it.y > canvas.height) {
+                lives--; soundEffect.miss();
+                document.getElementById("heart-border").innerText = "❤️".repeat(Math.max(0, lives));
+                items.splice(i, 1);
+                if (lives <= 0) endGame();
+            }
+        });
+        requestAnimationFrame(update);
+    }
+
+    function watchRewardAd() {
+        if (crazyGame) {
+            active = false;
+            crazyGame.ad.requestAd('rewarded', {
+                adFinished: () => { lives = 1; active = true; canReward = false; document.getElementById("game-over").style.display = "none"; document.getElementById("heart-border").innerText = "❤️"; requestAnimationFrame(update); },
+                adError: () => { lives = 1; active = true; document.getElementById("game-over").style.display = "none"; requestAnimationFrame(update); }
+            });
+        } else { lives = 1; active = true; document.getElementById("game-over").style.display = "none"; requestAnimationFrame(update); }
+    }
+
+    function endGame() {
+        active = false;
+        soundEffect.over();
+        document.getElementById("game-over").style.display = "flex";
+        document.getElementById("final-score").innerText = score;
+        if (score > highScore) { highScore = score; localStorage.setItem("gc_best_score", highScore); document.getElementById("high-score-hud").innerText = highScore; }
+        if (crazyGame) crazyGame.ad.requestAd('midroll');
+        if(!canReward) document.getElementById("reward-btn").style.display = "none";
+        document.getElementById("wa-share").href = `https://wa.me{encodeURIComponent('I scored ' + score + ' in Golden Catch!')}`;
+    }
+
+    const move = (ex) => { let r = canvas.getBoundingClientRect(); basket.x = Math.max(0, Math.min(canvas.width - 50, (ex - r.left) - 25)); };
+    window.addEventListener("mousemove", e => move(e.clientX));
+    canvas.addEventListener("touchmove", e => { e.preventDefault(); move(e.touches[0].clientX); }, { passive: false });
+</script>
+</body>
+</html>
